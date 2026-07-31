@@ -2,8 +2,8 @@
   "version": "1.0",
   "ai": {
     "provider": "deepseek",
-    "model": "deepseek-v4-flash",
-    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "model": "ark-code-latest",
+    "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "api_key_env": "DEEPSEEK_API_KEY",
     "throttle_sec": 1,
     "languages": ["zh"]
