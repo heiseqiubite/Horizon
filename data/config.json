@@ -1,16 +1,43 @@
 {
+  "version": "1.0",
   "ai": {
-    "provider": "openai",
-    "model": "doubao-seed-2.0-lite",
-    "api_key_env": "VOLCANO_API_KEY",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-    "throttle_sec": 0
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "throttle_sec": 1,
+    "languages": ["zh"]
   },
   "sources": {
+    "github": [
+      {
+        "type": "user_events",
+        "username": "karpathy",
+        "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "vllm-project",
+        "repo": "vllm",
+        "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "sgl-project",
+        "repo": "sglang",
+        "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "triton-lang",
+        "repo": "triton",
+        "enabled": true
+      }
+    ],
     "hackernews": {
       "enabled": true,
       "fetch_top_stories": 30,
-      "min_score": 50
+      "min_score": 150
     },
     "rss": [
       {
@@ -18,17 +45,103 @@
         "url": "https://xz.aliyun.com/feed",
         "enabled": true,
         "category": "security"
+      },
+      {
+        "name": "Simon Willison",
+        "url": "https://simonwillison.net/atom/everything/",
+        "enabled": true,
+        "category": "ai-tools"
+      },
+      {
+        "name": "GitHub Trending - Daily",
+        "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+        "enabled": true,
+        "category": "github-trending"
+      },
+      {
+        "name": "Zeli",
+        "url": "https://zeli.app/zh/rss.xml",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
+        "name": "Semianalysis",
+        "url": "https://newsletter.semianalysis.com/feed",
+        "enabled": true,
+        "category": "semiconductors"
       }
-    ]
+    ],
+    "reddit": {
+      "enabled": true,
+      "subreddits": [
+        {
+          "subreddit": "MachineLearning",
+          "enabled": true,
+          "sort": "hot",
+          "time_filter": "day",
+          "fetch_limit": 10,
+          "min_score": 60
+        },
+        {
+          "subreddit": "LocalLLaMA",
+          "enabled": true,
+          "sort": "hot",
+          "time_filter": "day",
+          "fetch_limit": 10,
+          "min_score": 60
+        }
+      ],
+      "users": [],
+      "fetch_comments": 10
+    },
+    "telegram": {
+      "enabled": true,
+      "channels": [
+        {
+          "channel": "zaihuapd",
+          "enabled": true,
+          "fetch_limit": 20
+        }
+      ]
+    }
   },
   "filtering": {
-    "ai_score_threshold": 6.0
+    "ai_score_threshold": 7.0,
+    "time_window_hours": 24
   },
   "webhook": {
     "enabled": true,
     "url_env": "HORIZON_WEBHOOK_URL",
+    "delivery": "summary_and_items",
+    "overview_position": "last",
     "platform": "feishu",
     "layout": "collapsible",
-    "languages": ["zh"]
+    "fallback_layout": "markdown",
+    "languages": ["zh"],
+    "request_body": {
+      "msg_type": "interactive",
+      "card": {
+        "schema": "2.0",
+        "config": {
+          "wide_screen_mode": true
+        },
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "#{message_title}"
+          },
+          "template": "blue"
+        },
+        "body": {
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "#{summary}"
+            }
+          ]
+        }
+      }
+    },
+    "headers": ""
   }
 }
