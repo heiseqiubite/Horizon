@@ -1,19 +1,12 @@
 {
   "version": "1.0",
   "ai": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-flash",
-    "base_url": "https://api.deepseek.com",
+    "provider": "openai",
+    "model": "doubao-seed-2.0-lite",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
     "api_key_env": "DEEPSEEK_API_KEY",
-    "temperature": 0.3,
-    "max_tokens": 8192,
-    "throttle_sec": 1,
-    "languages": [
-      "zh",
-      "en"
-    ],
-    "analysis_concurrency": 5,
-    "enrichment_concurrency": 5
+    "throttle_sec": 0,
+    "languages": ["zh"]
   },
   "sources": {
     "github": [
@@ -48,6 +41,12 @@
     },
     "rss": [
       {
+        "name": "先知社区",
+        "url": "https://xz.aliyun.com/feed",
+        "enabled": true,
+        "category": "security"
+      },
+      {
         "name": "Simon Willison",
         "url": "https://simonwillison.net/atom/everything/",
         "enabled": true,
@@ -74,7 +73,7 @@
       {
         "name": "LWN.net",
         "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
-        "enabled": true,
+        "enabled": false,
         "category": "linux-kernel"
       }
     ],
@@ -113,7 +112,7 @@
     }
   },
   "filtering": {
-    "ai_score_threshold": 8.0,
+    "ai_score_threshold": 7.0,
     "time_window_hours": 24
   },
   "webhook": {
@@ -124,9 +123,7 @@
     "platform": "feishu",
     "layout": "collapsible",
     "fallback_layout": "markdown",
-    "languages": [
-      "zh"
-    ],
+    "languages": ["zh"],
     "request_body": {
       "msg_type": "interactive",
       "card": {
