@@ -31,7 +31,7 @@ jobs:
         run: uv sync
 
       - name: Prepare GitHub Actions config
-        run: cp data/config.github.json data/config.json
+        run: echo "use config.json directly"
 
       - name: Run Horizon
         env:
