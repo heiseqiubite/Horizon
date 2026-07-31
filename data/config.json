@@ -1,0 +1,34 @@
+{
+  "ai": {
+    "provider": "openai",
+    "model": "doubao-seed-2.0-lite",
+    "api_key_env": "VOLCANO_API_KEY",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "throttle_sec": 0
+  },
+  "sources": {
+    "hackernews": {
+      "enabled": true,
+      "fetch_top_stories": 30,
+      "min_score": 50
+    },
+    "rss": [
+      {
+        "name": "先知社区",
+        "url": "https://xz.aliyun.com/feed",
+        "enabled": true,
+        "category": "security"
+      }
+    ]
+  },
+  "filtering": {
+    "ai_score_threshold": 6.0
+  },
+  "webhook": {
+    "enabled": true,
+    "url_env": "HORIZON_WEBHOOK_URL",
+    "platform": "feishu",
+    "layout": "collapsible",
+    "languages": ["zh"]
+  }
+}
