@@ -136,8 +136,6 @@
       "enabled": true,
       "mode": "apify",
       "users": [
-        "karpathy",
-        "simonw",
         "al3x_n3ff",
         "CyberWarship"
       ],
