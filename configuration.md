@@ -5,11 +5,11 @@ title: Configuration Guide
 
 # Configuration Guide
 
-Horizon is configured through two files: a `.env` file for API keys and a JSON file for sources, AI provider, and filtering options. The JSON file defaults to `data/config.json`.
+Horizon is configured through a `.env` file for secrets, a JSON file for runtime settings, and processing profiles for analysis and enrichment prompts. The JSON file defaults to `data/config.json`; profiles default to `profiles/`.
 
 ## Configuration Paths
 
-The CLI resolves configuration and state paths as follows:
+`horizon`, `horizon-wizard`, and `horizon-webhook` all resolve configuration and state paths the same way:
 
 | Option | Effect |
 | --- | --- |
@@ -22,16 +22,90 @@ uv run horizon --config /etc/horizon/config.json
 uv run horizon --data-dir /srv/horizon --config /etc/horizon/config.json
 ```
 
-When both options are present, configuration is loaded from `--config`, while summaries and subscribers remain under `--data-dir`. The setup wizard writes the default `data/config.json`; initialize a custom location manually:
+When both options are present, configuration is loaded from `--config`, while summaries and subscribers remain under `--data-dir`. Because this logic is identical across all three CLIs, passing the same `-d`/`-c` flags to each one keeps them pointed at the same files — for example, generating a config with `horizon-wizard --data-dir /srv/horizon`, then running `horizon --data-dir /srv/horizon` and testing with `horizon-webhook --data-dir /srv/horizon`.
+
+Without either flag, all three default to `data/config.json`. To bootstrap a custom location without the wizard, initialize it manually:
 
 ```bash
 mkdir -p /etc/horizon
 cp data/config.example.json /etc/horizon/config.json
 ```
 
+## Interactive Wizard
+
+`horizon-wizard` asks about your interests and generates `data/config.json` from matched presets and, optionally, AI recommendations:
+
+```bash
+uv run horizon-wizard
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-d`, `--data-dir PATH` | `data` | Path to the data directory |
+| `-c`, `--config PATH` | `<data-dir>/config.json` | Path to config file |
+| `-l`, `--log-level LEVEL` | `WARNING` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
+
+## Terminal Icons
+
+The `display.icon_style` setting controls icons printed to the terminal:
+
+```json
+{
+  "display": {
+    "icon_style": "nerd"
+  }
+}
+```
+
+Supported styles:
+
+| Value | Description |
+| --- | --- |
+| `emoji` | Color emoji icons. This is the default when `display` is omitted. |
+| `nerd` | Monochrome Nerd Font icons. Requires a Nerd Font in the terminal. |
+| `ascii` | ASCII-only markers for terminals without Unicode icon support. |
+
+This setting affects terminal output only. Icons embedded in generated Markdown
+and webhook message content are unchanged.
+
+## Processing Profiles
+
+The `processing` section controls profile discovery and the fallback used when
+automatic matching cannot select a profile:
+
+```json
+{
+  "processing": {
+    "profiles_dir": "profiles",
+    "default_profile": "tech-news",
+    "profile_settings": {
+      "tech-news": {
+        "threshold": 7.0,
+        "topic_dedup": true
+      },
+      "tech-blog": {
+        "threshold": 4.0,
+        "topic_dedup": false
+      }
+    }
+  }
+}
+```
+
+- `profiles_dir`: Directory containing one subdirectory per processing profile.
+- `default_profile`: ID of a profile present in `profiles_dir`.
+- `profile_settings`: User preferences keyed by profile ID. `threshold` accepts
+  `0` through `10` or `null` for no score filter; `topic_dedup` defaults to
+  `true`. Unknown profile IDs are rejected when Horizon starts.
+
+Each profile owns its matching, analysis, and enrichment behavior. Runtime
+filtering preferences stay in the main JSON configuration. See [Processing
+Profiles](profiles.md) for the file layout, complete schema, source routing
+rules, and block tool permissions.
+
 ## AI Providers
 
-Configure which AI model scores and summarizes your content.
+Configure which AI model analyzes and enriches your content.
 
 `api_key_env` is always an environment variable name, not the API key value.
 Store secrets in `.env` or your shell environment, then point `api_key_env` at
@@ -246,6 +320,11 @@ For OpenAI-compatible gateways, Horizon sends `temperature` by default. If a new
 ## Information Sources
 
 All sources are configured under the top-level `sources` key in `config.json`.
+Source entries also accept `profile`. An explicit profile ID uses that profile
+without an AI matching call. If `profile` is missing or set to `"auto"`, Horizon
+matches the item against the loaded profiles. An unknown explicit ID is an
+error. For nested sources, set the field on the item-producing entry, such as an
+RSS feed, Reddit subreddit or user, or OpenBB watchlist.
 
 ### GitHub
 
@@ -257,7 +336,8 @@ All sources are configured under the top-level `sources` key in `config.json`.
         "type": "user_events",
         "username": "gvanrossum",
         "enabled": true,
-        "category": "oss"
+        "category": "oss",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
@@ -296,7 +376,8 @@ All sources are configured under the top-level `sources` key in `config.json`.
         "name": "Blog Name",
         "url": "https://example.com/feed.xml",
         "enabled": true,
-        "category": "ai-ml"
+        "category": "ai-ml",
+        "profile": "auto"
       }
     ]
   }
@@ -471,20 +552,32 @@ No API key is required.
 
 ## Filtering
 
-Content is scored 0-10:
+Score filtering is configured under `processing.profile_settings` in the runtime
+configuration. Each profile can use a different `threshold`; set it to `null` or
+omit that profile's settings to disable score filtering. See [Processing
+Profiles](profiles.md#filtering) and [Scoring](scoring.md).
 
-- **9-10**: Groundbreaking - Major breakthroughs, paradigm shifts
-- **7-8**: High Value - Important developments, deep technical content
-- **5-6**: Interesting - Worth knowing but not urgent
-- **3-4**: Low Priority - Generic or routine content
-- **0-2**: Noise - Spam, off-topic, or trivial
+The runtime `collection` section controls the fetch window and contains only
+`time_window_hours`:
 
 ```json
 {
-  "filtering": {
-    "ai_score_threshold": 7.0,
-    "time_window_hours": 24,
+  "collection": {
+    "time_window_hours": 24
+  }
+}
+```
+
+- `time_window_hours`: Fetch content from last N hours
+
+The runtime `digest` section controls final section order and optional balanced
+digest limits:
+
+```json
+{
+  "digest": {
     "max_items": 20,
+    "profile_order": ["tech-news", "tech-blog", "finance-news"],
     "category_groups": {
       "ai": {
         "name": "AI / Machine Learning",
@@ -503,19 +596,19 @@ Content is scored 0-10:
 }
 ```
 
-- `ai_score_threshold`: Only include content scoring >= this value
-- `time_window_hours`: Fetch content from last N hours
 - `max_items`: Optional final cap after all group limits are applied
+- `profile_order`: Optional final-summary section order. When non-empty, it must
+  list every loaded profile exactly once. The example keeps financial news last.
 - `category_groups`: Optional map of quota groups. Each group requires a positive
   `limit` and a non-empty `categories` list. Items within each group are kept by
-  AI score, highest first.
+  analysis score, highest first.
 - `category_groups.*.name`: Optional display name used in run logs
 - `default_group`: Group key for items whose category does not match any
   configured group. Default is `other`.
 - `default_group_limit`: Optional positive limit for unmatched items. If omitted,
   unmatched items are unlimited except for `max_items`.
 
-Balanced digest filtering runs after AI score threshold filtering and topic
+Balanced digest filtering runs after configured profile filtering and topic
 deduplication, but before enrichment. This reduces enrichment calls to only the
 items that can appear in the final digest.
 
@@ -530,7 +623,8 @@ Sources without a category set enter the default group.
 
 If the same category appears in multiple groups, Horizon logs a warning and uses
 the first group in configuration order. Omitting both `category_groups` and
-`max_items` preserves the previous filtering behavior.
+`max_items` disables balanced digest limits; configured profile thresholds still
+apply.
 
 ## Environment Variable Substitution
 
@@ -695,7 +789,7 @@ Available variables:
 |----------|-------------|
 | `#{date}` | Report date, for example `2026-04-24` |
 | `#{language}` | Language code, such as `en` or `zh` |
-| `#{important_items}` | Number of items that passed the score threshold |
+| `#{important_items}` | Number of items selected by profile filtering |
 | `#{all_items}` | Total number of fetched items |
 | `#{result}` | `success` or `failed` |
 | `#{timestamp}` | Unix timestamp |
@@ -709,9 +803,13 @@ When `delivery` is `summary_and_items`, item messages also include:
 |----------|-------------|
 | `#{item_index}` | 1-based item number |
 | `#{item_count}` | Total number of item messages |
+| `#{profile_item_index}` | 1-based item number within the current Profile |
+| `#{profile_item_count}` | Number of item messages in the current Profile |
+| `#{item_profile}` | Current Profile ID |
+| `#{item_profile_name}` | Localized current Profile name |
 | `#{item_title}` | Current item title |
 | `#{item_url}` | Current item URL |
-| `#{item_score}` | Current item AI score |
+| `#{item_score}` | Current item analysis score |
 
 For webhook delivery, Horizon flattens HTML disclosure blocks such as `<details><summary>...</summary>` in `#{summary}` into plain Markdown link lists. This makes the generated summary easier to render in chat products. Saved Markdown files, GitHub Pages, and email content are unchanged.
 
@@ -791,6 +889,24 @@ With this layout, Horizon sends one interactive card containing the overview and
   }
 }
 ```
+
+### Testing
+
+Use `horizon-webhook` to preview or send a test notification without running the full pipeline:
+
+```bash
+uv run horizon-webhook --dry-run
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--lang LANG` | first configured language | Language to test |
+| `--dry-run` | off | Preview rendered content without sending |
+| `--delivery {summary,summary_and_items}` | value from config | Override delivery mode for this test |
+| `-d`, `--data-dir PATH` | `data` | Path to the data directory |
+| `-c`, `--config PATH` | `<data-dir>/config.json` | Path to config file |
+| `-l`, `--log-level LEVEL` | `WARNING` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
+
 
 ## Static Site
 
