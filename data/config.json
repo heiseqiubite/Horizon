@@ -149,9 +149,7 @@
   },
   "digest": {
     "max_items": null,
-    "profile_order": [
-      "tech-news"
-    ],
+    "profile_order": [],
     "category_groups": {},
     "default_group": "other",
     "default_group_limit": null
