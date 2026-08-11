@@ -137,7 +137,8 @@
       "mode": "apify",
       "users": [
         "karpathy",
-        "simonw"
+        "simonw",
+        "al3x_n3ff"
       ],
       "fetch_limit": 20,
       "category": "twitter",
