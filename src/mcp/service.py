@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from rich.console import Console
 
+from ..processing import ProfileRegistry
 from .errors import HorizonMcpError
 from .horizon_adapter import (
     apply_source_filter,
@@ -276,18 +277,24 @@ class HorizonPipelineService:
                 "languages": list(ctx.config.ai.languages),
                 "api_key_env": ctx.config.ai.api_key_env,
             },
-            "filtering": {
-                "ai_score_threshold": ctx.config.filtering.ai_score_threshold,
-                "time_window_hours": ctx.config.filtering.time_window_hours,
-                "max_items": ctx.config.filtering.max_items,
+            "collection": {
+                "time_window_hours": ctx.config.collection.time_window_hours,
+            },
+            "digest": {
+                "max_items": ctx.config.digest.max_items,
+                "profile_order": list(ctx.config.digest.profile_order),
                 "category_groups": {
                     key: group.model_dump(mode="json")
-                    for key, group in ctx.config.filtering.category_groups.items()
+                    for key, group in ctx.config.digest.category_groups.items()
                 },
-                "default_group": ctx.config.filtering.default_group,
-                "default_group_limit": ctx.config.filtering.default_group_limit,
+                "default_group": ctx.config.digest.default_group,
+                "default_group_limit": ctx.config.digest.default_group_limit,
             },
             "enabled_sources": get_enabled_sources(ctx.config),
+            "processing": {
+                "profiles_dir": ctx.config.processing.profiles_dir,
+                "default_profile": ctx.config.processing.default_profile,
+            },
             "selected_sources": selected_sources,
             "unknown_sources": unknown_sources,
             "missing_env": missing_env,
@@ -312,8 +319,13 @@ class HorizonPipelineService:
         )
 
         storage = make_storage(ctx.runtime, ctx.config_path)
+        profiles = self._profiles(ctx)
         orchestrator = make_orchestrator(
-            ctx.runtime, ctx.config, storage, console=self.console
+            ctx.runtime,
+            ctx.config,
+            storage,
+            console=self.console,
+            profiles=profiles,
         )
 
         run_id = self.run_store.create_run(run_id)
@@ -369,27 +381,26 @@ class HorizonPipelineService:
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for scoring.")
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        analyzer = ctx.runtime.ContentAnalyzer(ai_client, console=self.console)
-        scored_items = await analyzer.analyze_batch(items)
+        orchestrator = self._orchestrator(ctx)
+        scored_items = await orchestrator.analyze_items(items)
 
         self.run_store.save_items(run_id, "scored", items_to_dicts(scored_items))
-        score_threshold = ctx.config.filtering.ai_score_threshold
-        above_threshold = [x for x in scored_items if x.ai_score and x.ai_score >= score_threshold]
+        selected = [
+            item for item in scored_items if orchestrator.passes_profile_filter(item)
+        ]
 
         meta = self.run_store.update_meta(
             run_id,
             {
                 "scored_count": len(scored_items),
-                "scored_threshold": score_threshold,
-                "scored_above_threshold": len(above_threshold),
+                "selected_count": len(selected),
             },
         )
 
         return {
             "run_id": run_id,
             "scored": len(scored_items),
-            "above_threshold": len(above_threshold),
+            "selected": len(selected),
             "score_distribution": self._score_distribution(scored_items),
             "artifact": str((self.run_store.run_dir(run_id) / "scored_items.json").resolve()),
             "meta": meta,
@@ -411,18 +422,10 @@ class HorizonPipelineService:
             config_path=config_path,
         )
 
-        effective_threshold = (
-            threshold
-            if threshold is not None
-            else ctx.config.filtering.ai_score_threshold
-        )
-        storage = make_storage(ctx.runtime, ctx.config_path)
-        orchestrator = make_orchestrator(
-            ctx.runtime, ctx.config, storage, console=self.console
-        )
-        filtering_result = await orchestrator.filter_items(
+        orchestrator = self._orchestrator(ctx)
+        filtering_result = await orchestrator.select_digest_items(
             items,
-            threshold=effective_threshold,
+            threshold=threshold,
             topic_dedup=topic_dedup,
             log=False,
         )
@@ -430,19 +433,27 @@ class HorizonPipelineService:
         balanced_result = filtering_result.balanced_digest
         balanced_enabled = balanced_result.enabled
         balanced_group_counts = balanced_result.group_counts
+        eligible_count = (
+            filtering_result.eligible_count
+            if filtering_result.eligible_count is not None
+            else filtering_result.topic_dedup_count
+        )
 
         self.run_store.save_items(run_id, "filtered", items_to_dicts(important_items))
         meta = self.run_store.update_meta(
             run_id,
             {
                 "filtered_count": len(important_items),
-                "filter_threshold": effective_threshold,
+                "filter_threshold_override": threshold,
                 "topic_dedup_enabled": topic_dedup,
                 "topic_dedup_removed": filtering_result.topic_dedup_removed,
+                "reanalysis_filtered_count": (
+                    filtering_result.topic_dedup_count - eligible_count
+                ),
                 "balanced_digest_enabled": balanced_enabled,
                 "balanced_digest_group_counts": balanced_group_counts,
                 "balanced_digest_removed": (
-                    filtering_result.topic_dedup_count - len(important_items)
+                    eligible_count - len(important_items)
                 ),
             },
         )
@@ -450,10 +461,13 @@ class HorizonPipelineService:
         return {
             "run_id": run_id,
             "kept": len(important_items),
-            "threshold": effective_threshold,
+            "threshold_override": threshold,
             "removed_by_topic_dedup": filtering_result.topic_dedup_removed,
+            "removed_after_reanalysis": (
+                filtering_result.topic_dedup_count - eligible_count
+            ),
             "removed_by_balanced_digest": (
-                filtering_result.topic_dedup_count - len(important_items)
+                eligible_count - len(important_items)
             ),
             "balanced_digest_enabled": balanced_enabled,
             "group_counts": balanced_group_counts,
@@ -479,29 +493,44 @@ class HorizonPipelineService:
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for enrichment.")
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        enricher = ctx.runtime.ContentEnricher(ai_client, console=self.console)
-        await enricher.enrich_batch(items)
+        orchestrator = self._orchestrator(ctx)
+        enrichment_result = await orchestrator.enrich_items(items)
 
-        self.run_store.save_items(run_id, "enriched", items_to_dicts(items))
+        artifact_path = None
+        if enrichment_result.status == "failure":
+            self.run_store.invalidate_from(run_id, "enriched")
+        else:
+            artifact_path = self.run_store.save_items(
+                run_id, "enriched", items_to_dicts(items)
+            )
 
         citation_count = 0
         for item in items:
-            citation_count += len(item.metadata.get("sources", []))
+            if item.processing:
+                citation_count += sum(
+                    len(artifact.sources)
+                    for artifact in item.processing.artifacts.values()
+                )
 
         meta = self.run_store.update_meta(
             run_id,
             {
-                "enriched_count": len(items),
+                "enrichment_status": enrichment_result.status,
+                "enriched_count": enrichment_result.succeeded_count,
+                "enrichment_failed_count": enrichment_result.failed_count,
+                "enrichment_failed_ids": enrichment_result.failed_ids,
                 "citation_count": citation_count,
             },
         )
 
         return {
             "run_id": run_id,
-            "enriched": len(items),
+            "status": enrichment_result.status,
+            "enriched": enrichment_result.succeeded_count,
+            "failed": enrichment_result.failed_count,
+            "failed_ids": enrichment_result.failed_ids,
             "citation_count": citation_count,
-            "artifact": str((self.run_store.run_dir(run_id) / "enriched_items.json").resolve()),
+            "artifact": str(artifact_path.resolve()) if artifact_path else None,
             "meta": meta,
         }
 
@@ -525,7 +554,10 @@ class HorizonPipelineService:
         total_fetched = self._total_fetched(run_id, fallback=len(items))
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        summarizer = ctx.runtime.DailySummarizer()
+        summarizer = ctx.runtime.DailySummarizer(
+            profile_names=self._profiles(ctx).names,
+            profile_order=ctx.config.digest.profile_order,
+        )
         summary = await summarizer.generate_summary(
             items,
             date_str,
@@ -604,7 +636,8 @@ class HorizonPipelineService:
                 horizon_path=horizon_path,
                 config_path=config_path,
             )
-            stage_for_summary = "enriched"
+            if enrich_result["status"] != "failure":
+                stage_for_summary = "enriched"
 
         ctx, _, _ = self._build_context(
             horizon_path=horizon_path,
@@ -677,6 +710,16 @@ class HorizonPipelineService:
         items = dicts_to_items(ctx.runtime, payload)
         return items, ctx
 
+    def _orchestrator(self, ctx: PipelineContext) -> Any:
+        storage = make_storage(ctx.runtime, ctx.config_path)
+        return make_orchestrator(
+            ctx.runtime,
+            ctx.config,
+            storage,
+            console=self.console,
+            profiles=self._profiles(ctx),
+        )
+
     def _pick_summary_stage(self, run_id: str) -> str:
         for stage in ("enriched", "filtered", "scored", "raw"):
             if self.run_store.has_stage(run_id, stage):
@@ -695,10 +738,22 @@ class HorizonPipelineService:
             return fallback
 
     @staticmethod
+    def _profiles(ctx: PipelineContext) -> ProfileRegistry:
+        return ProfileRegistry.load(
+            Path(ctx.config.processing.profiles_dir).expanduser(),
+            ctx.config.processing.default_profile,
+            base_dir=ctx.horizon_path,
+        )
+
+    @staticmethod
     def _score_distribution(items: list[Any]) -> dict[str, int]:
-        buckets = {"0-2": 0, "3-4": 0, "5-6": 0, "7-8": 0, "9-10": 0}
+        buckets = {"unscored": 0, "0-2": 0, "3-4": 0, "5-6": 0, "7-8": 0, "9-10": 0}
         for item in items:
-            score = float(item.ai_score or 0.0)
+            analysis = item.processing.analysis if item.processing else None
+            if not analysis or analysis.score is None:
+                buckets["unscored"] += 1
+                continue
+            score = float(analysis.score)
             if score < 3:
                 buckets["0-2"] += 1
             elif score < 5:
