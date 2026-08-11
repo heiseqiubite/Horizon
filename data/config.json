@@ -131,6 +131,17 @@
           "profile": "tech-news"
         }
       ]
+    },
+    "twitter": {
+      "enabled": true,
+      "mode": "apify",
+      "users": [
+        "karpathy",
+        "simonw"
+      ],
+      "fetch_limit": 20,
+      "category": "twitter",
+      "profile": "tech-news"
     }
   },
   "collection": {
